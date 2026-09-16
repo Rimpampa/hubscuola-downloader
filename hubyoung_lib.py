@@ -1,20 +1,59 @@
 import io
 import json
 import shutil
+import warnings
 import requests
 import sqlite3
 import zipfile
-from PyPDF2 import PdfFileMerger
+
+try:
+    # pypdf (maintained fork) preferred on Python 3.12+
+    from pypdf import PdfReader, PdfWriter
+except ImportError:
+    from PyPDF2 import PdfFileReader as PdfReader
+    from PyPDF2 import PdfFileWriter as PdfWriter
 
 
 def merge_pdf(extracted_files, output):
-    merger = PdfFileMerger()
+    writer = PdfWriter()
 
     for pdf in extracted_files:
-        merger.append(io.BytesIO(pdf))
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                try:
+                    reader = PdfReader(io.BytesIO(pdf), strict=False)
+                except TypeError:
+                    # pypdf PdfReader has no strict kwarg
+                    reader = PdfReader(io.BytesIO(pdf))
+        except Exception as e:
+            print(f"  [warn] skipping unreadable PDF chunk: {e}")
+            continue
 
-    merger.write(output)
-    merger.close()
+        try:
+            num_pages = len(reader.pages)
+        except Exception:
+            # PyPDF2 1.26 fallback
+            num_pages = reader.getNumPages()
+
+        for i in range(num_pages):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        page = reader.pages[i]
+                    except Exception:
+                        page = reader.getPage(i)
+                try:
+                    writer.add_page(page)
+                except Exception:
+                    writer.addPage(page)
+            except Exception as e:
+                print(f"  [warn] skipping broken page {i}: {e}")
+                continue
+
+    with open(output, "wb") as f:
+        writer.write(f)
 
 
 class HubYoung:
